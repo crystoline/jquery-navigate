@@ -1,201 +1,367 @@
-$(function(){
+/**
+ * jQuery Navigate Plugin
+ * Handles AJAX navigation, form submissions, and browser history management
+ */
 
+(function ($) {
+    'use strict';
 
-    if(NProgress){
-        NProgress.configure({ easing: 'ease', speed: 50, showSpinner: true });
+    // Configuration
+    const CONFIG = {
+        nProgress: {
+            easing: 'ease',
+            speed: 50,
+            showSpinner: true,
+            completeDelay: 1000
+        },
+        ajax: {
+            timeout: 300000, // 5 minutes
+            defaultDestination: '#content'
+        }
+    };
+
+    /**
+     * Initialize NProgress if available
+     */
+    function initializeNProgress() {
+        if (typeof NProgress !== 'undefined') {
+            NProgress.configure(CONFIG.nProgress);
+        }
     }
-    $(document)
 
-        .ajaxStart(function () {
-            if(NProgress){
-                NProgress.set(0.4);
-                NProgress.start();
-            }
-        })
-        .ajaxStop(function () {
-            if(NProgress){
-                NProgress.set(0.9);
-                setTimeout(function () {
-                    NProgress.done();
-                    NProgress.remove();
-                }, 1000)
+    /**
+     * Setup AJAX progress indicators
+     */
+    function setupAjaxProgress() {
+        $(document)
+            .ajaxStart(function () {
+                if (typeof NProgress !== 'undefined') {
+                    NProgress.set(0.4);
+                    NProgress.start();
+                }
+            })
+            .ajaxStop(function () {
+                if (typeof NProgress !== 'undefined') {
+                    NProgress.set(0.9);
+                    setTimeout(() => {
+                        NProgress.done();
+                        NProgress.remove();
+                    }, CONFIG.nProgress.completeDelay);
+                }
+            });
+    }
 
+    /**
+     * Get base URL from meta tag
+     * @returns {string} Base URL
+     */
+    function getBaseUrl() {
+        return $('meta[name="base-url"]').attr('content') || '';
+    }
 
+    /**
+     * Normalize URL by removing base URL prefix
+     * @param {string} url - URL to normalize
+     * @returns {string} Normalized URL
+     */
+    function normalizeUrl(url) {
+        const baseUrl = getBaseUrl();
+        if (!baseUrl || !url) {
+            return url || '';
+        }
+        return url.indexOf(baseUrl) === 0 ? url.replace(baseUrl, '') : url;
+    }
+
+    /**
+     * Build complete URL with base URL
+     * @param {string} url - Relative URL
+     * @returns {string} Complete URL
+     */
+    function buildCompleteUrl(url) {
+        return getBaseUrl() + normalizeUrl(url);
+    }
+
+    /**
+     * Perform AJAX request with given options
+     * @param {Object} options - AJAX options
+     */
+    function doAjax(options) {
+        const dest = $(options.dst);
+
+        if (!dest.length) {
+            console.error('Destination element not found:', options.dst);
+            return;
+        }
+
+        const completeUrl = buildCompleteUrl(options.url);
+
+        $.ajax({
+            url: completeUrl,
+            method: options.method || 'GET',
+            data: options.data,
+            cache: false,
+            contentType: false,
+            processData: false,
+            timeout: CONFIG.ajax.timeout,
+
+            success: function (data) {
+                const attachMode = options.attach || 'replace';
+
+                switch (attachMode) {
+                    case 'prepend':
+                        dest.prepend(data);
+                        break;
+                    case 'append':
+                        dest.append(data);
+                        break;
+                    case 'replace':
+                    default:
+                        dest.html(data);
+                }
+            },
+
+            error: function (xhr, ajaxOptions, thrownError) {
+                handleAjaxError(xhr, thrownError, dest);
+            },
+
+            complete: function () {
+                $('html, body').animate({ scrollTop: 0 }, 'slow');
             }
         });
-
-
-    var anchor_handler = function(e){
-
-        e.preventDefault();
-        var obj = $(this);//alert(obj);
-        var url =  '';
-        if(obj.attr('data-href')){
-            url = obj.attr('data-href');
-        }else if(obj.attr('href')){
-            url = obj.attr('href');
-        }
-            var method =  'get';
-        var dst = (obj.attr('data-dst'))? obj.attr('data-dst'): '#content';
-        var data = {}
-
-        var title = (obj.attr('title'))? obj.attr('title'): url;
-        var options = {
-            url: url,
-            method: method,
-            dst: dst,
-            data: data
-        }
-
-        do_ajax(options)
-        //alert($('meta[name="base-url"]').attr('content') + "#"+url);
-        if(!obj.attr('data-temp'))
-            history.pushState(options, title, $('meta[name="base-url"]').attr('content')+'#'+get_url(url));
-
-
     }
 
-    var form_handler = function(e){
+    /**
+     * Handle AJAX errors
+     * @param {Object} xhr - XMLHttpRequest object
+     * @param {string} thrownError - Error message
+     * @param {jQuery} dest - Destination element
+     */
+    function handleAjaxError(xhr, thrownError, dest) {
+        const baseUrl = getBaseUrl();
+
+        switch (xhr.status) {
+            case 401:
+                // Unauthorized - redirect to login
+                window.location = baseUrl;
+                break;
+
+            default:
+                const errorHtml = `
+                    <div class="alert alert-warning alert-dismissible" role="alert" style="margin-top: 50px">
+                        <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+                            <span aria-hidden="true">&times;</span>
+                        </button>
+                        <strong>An Error Occurred!</strong> ${thrownError}
+                    </div>
+                `;
+
+                const $msg = $(errorHtml);
+                dest.html($msg);
+
+                // Auto-dismiss error message
+                $msg.fadeTo(5000, 500).slideUp(500, function () {
+                    $(this).alert('close');
+                });
+
+                // Append response for debugging
+                if (xhr.responseText) {
+                    dest.append(xhr.responseText);
+                }
+
+                console.error('AJAX Error:', xhr);
+        }
+    }
+
+    /**
+     * Handle anchor click events
+     * @param {Event} e - Click event
+     */
+    function handleAnchorClick(e) {
         e.preventDefault();
-        var obj = $(this)
-        var url = (obj.attr('action'))? obj.attr('action'): '';
-        var method = (obj.attr('method'))? obj.attr('method'): 'get';
-        var dst = (obj.attr('data-dst'))? obj.attr('data-dst'): '#content';
-        var attach = (obj.attr('data-attach'))? obj.attr('data-attach'): 'replace';
 
+        const $obj = $(this);
+        const url = $obj.attr('data-href') || $obj.attr('href') || '';
 
-        var data = new FormData($(this)[0]);
+        if (!url) {
+            console.warn('No URL found for anchor:', $obj);
+            return;
+        }
 
-        console.log(data);
+        const options = {
+            url: url,
+            method: 'GET',
+            dst: $obj.attr('data-dst') || CONFIG.ajax.defaultDestination,
+            data: {}
+        };
 
-        var title = (obj.attr('title'))? obj.attr('title'): url;
-        var options = {
+        const title = $obj.attr('title') || url;
+
+        doAjax(options);
+
+        // Add to browser history (unless temporary)
+        if (!$obj.attr('data-temp')) {
+            history.pushState(
+                options,
+                title,
+                `${getBaseUrl()}#${normalizeUrl(url)}`
+            );
+        }
+    }
+
+    /**
+     * Handle form submit events
+     * @param {Event} e - Submit event
+     */
+    function handleFormSubmit(e) {
+        e.preventDefault();
+
+        const $obj = $(this);
+        const url = $obj.attr('action') || '';
+        const method = ($obj.attr('method') || 'GET').toUpperCase();
+        const dst = $obj.attr('data-dst') || CONFIG.ajax.defaultDestination;
+        const attach = $obj.attr('data-attach') || 'replace';
+
+        const data = new FormData($obj[0]);
+        const title = $obj.attr('title') || url;
+
+        const options = {
             url: url,
             method: method,
             dst: dst,
             data: data,
-            attach:attach,
+            attach: attach,
             cache: false
+        };
+
+        // Add to browser history for GET requests (unless temporary)
+        if (!$obj.attr('data-temp') && method === 'GET') {
+            const serializedData = $obj.serializeArray();
+            const historyOptions = { ...options, data: serializedData };
+
+            history.pushState(
+                historyOptions,
+                title,
+                `${getBaseUrl()}#${normalizeUrl(url)}`
+            );
         }
-        if(!obj.attr('data-temp') && method.toLowerCase() == 'get'){
-            var opt = options
-            opt.data = $(this).serializeArray();
-            history.pushState(opt, title,$('meta[name="base-url"]').attr('content')+"#"+get_url(url));
-        }
-        do_ajax(options)
+
+        doAjax(options);
     }
-    window.addEventListener('popstate', function(e) {
-        var options = e.state;
 
-        if (options == null) {
+    /**
+     * Handle browser back/forward navigation
+     * @param {PopStateEvent} e - Popstate event
+     */
+    function handlePopState(e) {
+        const options = e.state;
 
-        } else {
-            do_ajax(options)
+        if (options) {
+            doAjax(options);
         }
-    });
-    $(document).on('click', 'a[data-ajax=true], [data-ajax-links] a[data-ajax-links] a', anchor_handler);
-    $(document).on('submit', 'form[data-ajax=true]', form_handler);
-    $(document).on('change', '.selectAll', function(e) {//select all check boxes
-
-        var checkboxes = $(this).closest('table').find(':checkbox');
-        e.preventDefault
-        if($(this).is(":checked:not([disabled])")) {
-            checkboxes.prop('checked', true);
-        } else {
-            checkboxes.prop('checked', false);
-        }
-    });
-})
-
-$(function(e){
-    var url = location.hash; //alert(url);
-    if(url){
-        var options = {
-            url: $('meta[name="base-url"]').attr('content') + get_url(url.replace("#", "")),
-            method: 'get',
-            cache: false,
-            dst: '#content'
-        }
-        //alert(get_url(url.replace("#", "")));
-        do_ajax(options);
     }
-})
-function do_ajax(options){
-    var dest = $(options.dst);
 
-    options.url  = $('meta[name="base-url"]').attr('content') + get_url(options.url)
-    //alert( options.url)
-    $.ajax({
-        cache: false,
-        url: options.url,
-        method: options.method,//type of posting the data
-        data: options.data,
+    /**
+     * Handle "select all" checkbox functionality
+     * @param {Event} e - Change event
+     */
+    function handleSelectAll(e) {
+        e.preventDefault();
 
-        cache: false,
-        contentType: false,
-        processData: false,
-        //async: (options.method == 'post') ? false: true,
+        const $checkbox = $(this);
+        const $table = $checkbox.closest('table');
+        const $checkboxes = $table.find(':checkbox:not([disabled])');
 
-        success: function (data) {
-            //alert( dest.html())
-            switch (options.attach){
-                case 'prepend': dest.prepend(data); break;
-                case 'append': dest.append(data); break;
-                case 'replace': dest.html(data); break;
-                default: dest.html(data);
+        $checkboxes.prop('checked', $checkbox.is(':checked'));
+    }
+
+    /**
+     * Load content from URL hash on page load
+     */
+    function loadFromHash() {
+        const hash = location.hash;
+
+        if (hash) {
+            const url = normalizeUrl(hash.replace('#', ''));
+            const options = {
+                url: buildCompleteUrl(url),
+                method: 'GET',
+                cache: false,
+                dst: CONFIG.ajax.defaultDestination
+            };
+
+            doAjax(options);
+        }
+    }
+
+    /**
+     * Create and attach reload button
+     */
+    function createReloadButton() {
+        const $reload = $(`
+            <button id="navigate-reload" 
+                    class="btn btn-primary" 
+                    style="position: fixed; z-index: 1040; top: 100px; right: 10px"
+                    title="Reload current page">
+                <i class="fa fa-refresh"></i>
+            </button>
+        `);
+
+        $('body').append($reload);
+
+        $(document).on('click', '#navigate-reload', function (e) {
+            e.preventDefault();
+
+            const options = history.state;
+
+            if (options) {
+                doAjax(options);
+            } else {
+                console.log('No history state available for reload');
             }
-            //alert( dest.html())
-            //r();
-        },
-        error: function(xhr, ajaxOptions, thrownError){
-            // alert(ajaxOptions)
-            var base_url = $('meta[name="base-url"]').attr('content');
-            switch(xhr.status){
-                case 401:  window.location =  base_url ; break;
-                default:
-                    var msg = $('<div class="alert alert-warning alert-dismissible" role="alert" style="margin-top: 50px">'+
-                        '<button type="button" class="close" data-dismiss="alert" aria-label="Close">'+
-                        '<span aria-hidden="true">&times;</span></button>'+
-                        '<strong>An Error Occurred! </strong> '+thrownError+ '</div>');
-                    dest.html(msg);
-
-                    msg.fadeTo(5000, 500).slideUp(500, function(){
-                        $(this).alert('close');
-                    });
-                    dest.append(xhr.responseText);
-                    console.log(xhr);
-            }
-            //what to do in error
-        },
-        complete: function () {
-            $("html, body").animate({ scrollTop: 0 }, "slow");
-        },
-        timeout : 300000//timeout of the ajax call
-    });
-   // alert(get_url('http://myinvoice.org/dashboard/1/officer'));
-}
-
-function get_url(url){
-    var base_url = $('meta[name="base-url"]').attr('content');
-    //alert(base_url);
-    var site_url = (base_url)? base_url: '';
-    if(url.indexOf(site_url) == 0){
-        return url.replace(site_url,'');
+        });
     }
-    else return url;
-}
 
-$(function () {
-    $reload = $('<button id="navigate-reload" class="btn btn-primary" style="position: fixed; z-index: 1040;top: 100px; right: 10px"><i class="fa fa-refresh"></i></button>');
-    $('body').append($reload);
-    $(document).on('click', '#navigate-reload', function (e) {
-        var options = history.state;
+    /**
+     * Initialize all event handlers
+     */
+    function initializeEventHandlers() {
+        // Anchor clicks
+        $(document).on(
+            'click',
+            'a[data-ajax=true], [data-ajax-links] a',
+            handleAnchorClick
+        );
 
-        console.log(options)
-        if (options == null) {
-            //alert('no Event');
-        } else {
-            do_ajax(options)
-        }
-    })
-})
+        // Form submissions
+        $(document).on(
+            'submit',
+            'form[data-ajax=true]',
+            handleFormSubmit
+        );
+
+        // Select all checkboxes
+        $(document).on(
+            'change',
+            '.selectAll',
+            handleSelectAll
+        );
+
+        // Browser navigation
+        window.addEventListener('popstate', handlePopState);
+    }
+
+    /**
+     * Initialize the plugin
+     */
+    function initialize() {
+        initializeNProgress();
+        setupAjaxProgress();
+        initializeEventHandlers();
+        createReloadButton();
+        loadFromHash();
+    }
+
+    // Initialize on document ready
+    $(initialize);
+
+})(jQuery);
